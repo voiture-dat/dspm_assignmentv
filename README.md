@@ -1,1 +1,2 @@
 # dspm_assignmentv
+Find the .rmd and the .html file in here. I also created folders as suggested for such projects, most of which were not needed here. Please neglect the typo on the html-file's heading No 5. I did not want to rerun it, as the API calls were already depleted.

@@ -1,18 +1,17 @@
 ---
-title: "Assignment 4 - Max Haberl"
-date: "28/12/2020"
+title: "Assignment 5 - Max Haberl"
+date: "07/02/2020"
 output:
   html_document:
     toc: True
 author: Max Haberl (5407084) in collaboration with Lukas Guenner (5393972) (different codes)
-runtime: shiny
 
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
-# Assignment 4 - Multilevel linear models and dashboards with Shiny 
+# Assignment 5 - GitHub and the ticketmaster.com API
 I hereby assure to have complied with the *Code of Conduct*
 
 
@@ -20,7 +19,7 @@ I hereby assure to have complied with the *Code of Conduct*
 
 ```{r Preparation, echo = FALSE, error = TRUE}
 
-# Example of the path I used and copied into the clipboard C:\Users\maxem\Documents\Uni\Master\WiSe 2021\DSPM 20\Assignments\Ass4
+# Example of the path I used and copied into the clipboard C:\Users\maxem\Documents\Uni\Master\WiSe 2021\DSPM 20\Assignments\Ass5\Repo
 rm(list= ls()) # clearing workspace
 wd <- function() {  # helps converting a copied file path into r-eligible strings, otherwise directly assign to path
   x <- readClipboard()
@@ -33,179 +32,155 @@ setwd(path)
 getwd()
 ```
 
-## Exercise 1 - Andrew Gelman’s radon example
+## Exercise 1 & 2 - Setting things up
+
+Request API key via [ticketmaster explorer](https://developer.ticketmaster.com/api-explorer/v2/) and setup repository on [github.com/voiture-dat/dspm_assignmentv](https://github.com/voiture-dat/dspm_assignmentv)
+
 
 Loading the data, merging and preprocessing as required.
 ```{r EX1}
-if (!require("tidyverse")) install.packages("tidyverse")
+source("../../tm_api_key.R")
+# otherwise use your own key
+# app_key <- 'XXXXXXXXXXXXXXXXXXX'
+
+```
+
+
+
+## Exercise 3 
+
+At first we retrieve nested data iin that the json object contains the data of interest as well as some meta data on our search request. within the first sublist all required information is nested into lists again. In order to disentangle the embedded information some intermediate steps are necessary as can be seen below. Caveat: one API call only delivers 20 entries, meaning that we have to loop through the pages in order to retrieve all venues Germany-wide.
+
+``` {r EX 3, warning = FALSE}
+if (!require("httr")) install.packages("httr")
 if (!require("dplyr")) install.packages("dplyr")
 
-library(tidyverse)
+if (!require("jsonlite")) install.packages("jsonlite")
+library(httr)
+library(jsonlite)
 library(dplyr)
 
-household_level <- read.csv('household.csv')
-county_level <- read.csv('county.csv')
+query_list <- paste('https://app.ticketmaster.com/discovery/v2/venues?apikey=', app_key ,'&locale=*&page=0&countryCode=DE', sep = "")
 
-full_set <- left_join(household_level, county_level, by = 'county')
-clean_set <- full_set[,-5]
-clean_set <- clean_set %>% rename(county.name = county.name.x)
+# Germany:
+retr <- GET(query_list)
+cont <- fromJSON(content(retr, as = 'text'))
+venue_data <- as.data.frame(cont$`_embedded`$venues)
+venue_data_DE <- data.frame(venue_data$name, venue_data$city[1], venue_data$postalCode, venue_data$address[1], venue_data$url, venue_data$location[1], venue_data$location[2])
+colnames(venue_data_DE) <- c('name', 'city', 'postalCode', 'address', 'url', 'longitude', 'latitude')
+
 
 ```
 
-
-
-## Exercise 2 - Varying-intercept model with an individual-level predictor
-
-A quick glance at the frequencies of observations for each county shows that LAC QUI PARLE contains two household observations only. One observation being utterly implausible, it is not surprising that a FE-estimators of counties with very few observations only should not be trusted. Extreme values are more likely to occur for small sample cases. As for Hennepin yielding the largest absolute deviation the exact opposite holds true. With 105 housholds observed in this county, a lot more variation is present within this county and thus allows for more precision. This variability can be used and modelled in the multilevel setting.
-
-```{r EX2}
-if (!require("ggplot2")) install.packages("ggplot2")
-if (!require("lme4")) install.packages("lme4")
-
-library(ggplot2)
-library(lme4)
-
-model1 <- lmer(log.radon ~ basement + (1 | county), data = clean_set) # estimating the first model
-mixed1 <- coef(model1)$county[,1] # extracting the RE and FE coefficients
-
-model2 <- lm(log.radon ~ basement + as.factor(county) - 1 , data = clean_set) # estimating model and remove intercept
-no_pool2 <- coef(model2)[c(2:86)]
-
-deviation1 <- abs(mixed1 - no_pool2) # absolute deviation betweeen the two
-result1 <- cbind.data.frame(deviation1, county_level$county.name) # merge into one 
-minmax1 <- result1 %>% subset(deviation1 == max(result1$deviation1) | deviation1 == min(result1$deviation1)) # look for max and min
-test <- household_level %>% group_by(county.name) %>% summarise(n=n())
-print(minmax1)
-
-```
-
-## Exercise 3 - Varying-intercept model with an individual-level and a group-level predictor
-
-```{r EX3}
-if (!require("ggplot2")) install.packages("ggplot2")
-if (!require("lme4")) install.packages("lme4")
-if (!require("arm")) install.packages("arm")
-
-library(ggplot2)
-library(lme4)
-library(arm)
-
-
-model3 <- lmer(log.radon ~ basement + log.uranium + (1 | county) , data = clean_set)
-mixed3 <- coef(model3)$county[,1] + coef(model3)$county[,3]*county_level$log.uranium + coef(model3)$county[,2] # error in study? why include the low-level predictor coefficient as well?
-se_intercepts <- se.ranef(model3)$county
-plot_data <- cbind.data.frame(county_level$log.uranium, mixed3, se_intercepts)
-
-int_fix <- fixef(model3)[1]+fixef(model3)[2]
-slope_fix <- fixef(model3)[3]
+## Exercise 4 - Loop through pages
 
 
 
-plot1 <- ggplot(plot_data, aes(x = county_level$log.uranium, y = mixed3)) +
-  geom_point() + 
-  geom_errorbar(aes(ymin = mixed3 - se_intercepts, ymax = mixed3 + se_intercepts )) +
-  geom_abline(intercept =  int_fix, slope = slope_fix) + labs(x = 'county log(uranium) level', y = 'estimated county intercept', title = 'Visualization of 2nd level regression')
+``` {r EX 4, warning = FALSE, message = FALSE}
 
-plot1
-```
-
-## Exercise 3 - Varying intercepts and slopes model
-
-```{r EX4}
-
-model4 <- lmer(log.radon ~ 1 + basement + (1 + basement | county), data = clean_set)
-int_model4 <- coef(model4)$county[1]
-slope_model4 <- coef(model4)$county[2]
-helper <- cbind.data.frame(int_model4, slope_model4, county_level$county.name)
-
-int_model1 <- coef(model1)$county[1]
-slope_model1 <- coef(model1)$county[2]
-helper2 <- cbind.data.frame(int_model1, slope_model1, county_level$county.name)
+num_pages <- cont$page$totalPages
+num_entries <- cont$page$totalElements
 
 
-if (!require("shiny")) install.packages("shiny")
-
-library(shiny)
-
-
-ui <- navbarPage(title = 'Assignment IV Dashboard - Multilevel Modelling',
-                 tabPanel('Model 1', sidebarLayout(
-    sidebarPanel(
-      selectInput(inputId = "x1", label = "County", choices = county_level$county.name, selected = "ANOKA")
-    ),
-    mainPanel(
-      verticalLayout(textOutput('title1'),
-                     plotOutput(outputId = "scat1"),
-                     htmlOutput('text1'))))),
-                 tabPanel('Model 2', 
-                          verticalLayout(textOutput('title2'),
-                                         plotOutput('scat2'))),
-                 tabPanel('Model 3',   sidebarLayout(
-    sidebarPanel(
-      selectInput(inputId = "x", label = "County", choices = county_level$county.name, selected = "ANOKA")
-    ),
-    mainPanel(
-      verticalLayout(textOutput('title'),
-                     plotOutput(outputId = "scat"),
-                     htmlOutput('text'))
-    )
-  ))
-
-)
-
-
-
-server <- function(input, output, session) {
-    observeEvent(input$x, {
-      dataset <- filter(clean_set, county.name == input$x)
-      temp <- filter(helper, county_level$county.name == input$x)
-      # dataset$intcpt <- rep(temp[1], length(dataset))
-      # dataset$slpe <- rep(temp[2], length(dataset)) 
-      intcpt <- as.numeric(temp[1])
-      slpe <- as.numeric(temp[2])
-      
-      output$title <- renderText('Varying intercepts and slopes model')
-      output$scat <- renderPlot({
-        ggplot(dataset, aes(x = basement, y = log.radon)) + geom_abline(intercept = intcpt, slope = slpe) + 
-          geom_point(position = "jitter", color = 'blue') + labs(x = 'basement indicator', y = 'log(radon) concentration', title = 'Multilevel Regression Lines')
-      })
-      
-      output$text <- renderText({
-        paste('For county <b>', input$x, '</b> the regression intercept is: <b>', round(intcpt, 4), '</b>. The slope is : <b>', round(slpe, 4),'</b> .', sep = '')
-      })
-  
-    })
-  
-    observeEvent(input$x1, {
-      dataset2 <- filter(clean_set, county.name == input$x1)
-      temp <- filter(helper2, county_level$county.name == input$x1)
-      # dataset$intcpt <- rep(temp[1], length(dataset))
-      # dataset$slpe <- rep(temp[2], length(dataset)) 
-      intcpt <- as.numeric(temp[1])
-      slpe <- as.numeric(temp[2])
-      
-      output$title1 <- renderText('Varying-intercept model with an individual-level predictor')
-      output$scat1 <- renderPlot({
-        ggplot(dataset2, aes(x = basement, y = log.radon)) + geom_abline(intercept = intcpt, slope = slpe) + 
-          geom_point(position = "jitter", color = 'blue') + labs(x = 'basement indicator', y = 'log(radon) concentration', title = 'Multilevel Regression Lines')
-      })
-      
-      output$text1 <- renderText({
-        paste('For county <b>', input$x1, '</b> the regression intercept is: <b>', round(intcpt, 4), '</b>. The slope is : <b>', round(slpe, 4),'</b> .', sep = '')
-      })
-  
-    })
-    
-    output$title2 <- renderText('Varying-intercept model with an individual-level and a group-level predictor')
-    output$scat2 <- renderPlot({
-      ggplot(plot_data, aes(x = county_level$log.uranium, y = mixed3)) +
-  geom_point(color = 'blue', size = 2) + 
-  geom_errorbar(aes(ymin = mixed3 - se_intercepts, ymax = mixed3 + se_intercepts ), color = 'lightblue') +
-  geom_abline(intercept =  int_fix, slope = slope_fix) + labs(x = 'county log(uranium) level', y = 'estimated county intercept', title = 'Visualization of 2nd level regression', subtitle = 'including 1 SE deviations')
-    })
-    
+# iterate over all pages and store in large list object
+cont_list <- vector(mode = 'list', length = num_pages)
+for (i in 0:(num_pages-1)){
+  query_list2 <- paste('https://app.ticketmaster.com/discovery/v2/venues?apikey=', app_key ,'&locale=*&page=',i,'&countryCode=DE', sep = "")
+  temp_retr <- GET(query_list2)
+  temp_cont <- fromJSON(content(temp_retr, as = 'text'))
+  cont_list[i+1] <- temp_cont
+  Sys.sleep(0.2) # throws errors anyways, even with more conservative rates, API instable? Throws errors even for 1 per second...
   
 }
 
-shinyApp(ui = ui, server = server)
+df <- as.data.frame(cont_list[1])
+
+for (i in 2:num_pages){
+  tryCatch({
+    df2 <- as.data.frame(cont_list[i])
+    df <- full_join(df, df2)    
+  }, error = function(e){})
+
+}
+venue_data_all <- data.frame(df$venues.name, df$venues.city[1], df$venues.postalCode, df$venues.address[1], df$venues.url, df$venues.location[1], df$venues.location[2])
+
+library(tidyr)
+venue_data_all <- drop_na(venue_data_all)
+venue_data_all$longitude <- as.numeric(venue_data_all$longitude)
+venue_data_all$latitude <- as.numeric(venue_data_all$latitude)
+venue_data_all <- subset(venue_data_all, (venue_data_all$longitude < 15.043611 & venue_data_all$longitude > 5.866944) & (venue_data_all$latitude < 55.0846 & venue_data_all$latitude > 47.271679))
+
+
+
+
+```
+
+## Exercise 5 - Visualisation
+``` {r EX 5, warning = FALSE, message = FALSE}
+library(ggplot2)
+ggplot() +
+  geom_polygon(
+    aes(x = long, y = lat, group = group), data = map_data("world", region = "Germany"), fill = "grey90",color = "black") +
+  theme_void() + coord_quickmap() +
+  geom_point(aes(x = longitude, y = latitude), data = venue_data_all, color = 'red', alpha = 0.2) + 
+  labs(title = "Event locations across Germany", caption = "Source: ticketmaster.com") +
+  theme(title = element_text(size=8, face='bold'), plot.caption = element_text(face = "italic"))
+
+# ggsave('venues_GER.jpeg', path = './figures') # for saving to figures folder
+
+```
+
+## Exercise 6 - Repeat for Netherlands
+
+``` {r EX 6, warning = FALSE, message = FALSE}
+
+query_list <- paste('https://app.ticketmaster.com/discovery/v2/venues?apikey=', app_key ,'&locale=*&page=0&countryCode=NL', sep = "")
+
+# Germany:
+retr <- GET(query_list)
+cont <- fromJSON(content(retr, as = 'text'))
+num_pages <- cont$page$totalPages
+
+# venue_data_all <- data.frame(matrix(NA, nrow = 0, ncol = 7))
+# colnames(venue_data_all) <- c('name', 'city', 'postalCode', 'address', 'url', 'longitude', 'latitude')
+
+cont_list <- vector(mode = 'list', length = num_pages)
+for (i in 0:(num_pages-1)){
+  query_list2 <- paste('https://app.ticketmaster.com/discovery/v2/venues?apikey=', app_key ,'&locale=*&page=',i,'&countryCode=NL', sep = "")
+  temp_retr <- GET(query_list2)
+  temp_cont <- fromJSON(content(temp_retr, as = 'text'))
+  cont_list[i+1] <- temp_cont
+  Sys.sleep(0.2) # throws errors anyways, even with more conservative rates
+  
+}
+
+df_NL <- as.data.frame(cont_list[1])
+
+for (i in 2:num_pages){
+  tryCatch({
+    df2 <- as.data.frame(cont_list[i])
+    df_NL <- full_join(df_NL, df2)    
+  }, error = function(e){})
+
+}
+venue_data_all_NL <- data.frame(df_NL$venues.name, df_NL$venues.city[1], df_NL$venues.postalCode, df_NL$venues.address[1], df_NL$venues.url, df_NL$venues.location[1], df_NL$venues.location[2])
+
+
+venue_data_all_NL <- drop_na(venue_data_all_NL)
+venue_data_all_NL$longitude <- as.numeric(venue_data_all_NL$longitude)
+venue_data_all_NL$latitude <- as.numeric(venue_data_all_NL$latitude)
+venue_data_all_NL <- subset(venue_data_all_NL, (venue_data_all_NL$longitude < 7.2277 & venue_data_all_NL$longitude > 3.3583) & (venue_data_all_NL$latitude < 53.555 & venue_data_all_NL$latitude > 50.750417))
+
+
+ggplot() +
+  geom_polygon(
+    aes(x = long, y = lat, group = group), data = map_data("world", region = "Netherlands"), fill = "grey90",color = "black") +
+  theme_void() + coord_quickmap() +
+  geom_point(aes(x = longitude, y = latitude), data = venue_data_all_NL, color = 'red', alpha = 0.2) + 
+  labs(title = "Event locations across the Netherlands", caption = "Source: ticketmaster.com") +
+  theme(title = element_text(size=8, face='bold'), plot.caption = element_text(face = "italic"))
+
+#ggsave('venues_NL.jpeg', path = './figures') # for saving to figures folder
+
+
 ```
